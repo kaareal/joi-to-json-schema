@@ -2,32 +2,6 @@ const assert = require('assert');
 
 // Converter helpers for Joi types.
 
-function scanForLazy(joi, lazyFn) {
-  const type = joi._type;
-  const lazies = [];
-  console.log(joi._type);
-  if (joi._type === 'lazy') {
-    lazies.push(joi);
-  } else if (type === 'array') {
-    joi._inner.items.forEach((joiChild) => {
-      const result = scanForLazy(joiChild.schema || joiChild, lazyFn);
-      if (result.length) {
-        lazies.push(...result);
-      }
-    });
-  } else if (type === 'object') {
-    joi._inner.children.forEach((joiChild) => {
-      const result = scanForLazy(joiChild.schema || joiChild, lazyFn);
-      if (result.length) {
-        lazies.push(...result);
-      }
-    });
-  }
-  return lazies;
-}
-
-const hash = {};
-
 const TYPES = {
   alternatives: (schema, joi, transformer) => {
     const result = (schema.oneOf = []);
@@ -193,9 +167,11 @@ const TYPES = {
     schema.type = 'object';
     schema.properties = {};
     schema.additionalProperties = Boolean(joi._flags.allowUnknown);
-    schema.patterns = joi._inner.patterns.map((pattern) => {
-      return { regex: pattern.regex, rule: convert(pattern.rule, transformer) };
-    });
+    if (joi._inner.patterns.length) {
+      schema.patterns = joi._inner.patterns.map((pattern) => {
+        return { regex: pattern.regex, rule: convert(pattern.rule, transformer) };
+      });
+    }
 
     if (!joi._inner.children) {
       return schema;
