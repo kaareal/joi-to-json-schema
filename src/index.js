@@ -1,21 +1,44 @@
-import assert from 'assert';
+const assert = require('assert');
 
 // Converter helpers for Joi types.
 
-let TYPES = {
+function scanForLazy(joi, lazyFn) {
+  const type = joi._type;
+  const lazies = [];
+  console.log(joi._type);
+  if (joi._type === 'lazy') {
+    lazies.push(joi);
+  } else if (type === 'array') {
+    joi._inner.items.forEach((joiChild) => {
+      const result = scanForLazy(joiChild.schema || joiChild, lazyFn);
+      if (result.length) {
+        lazies.push(...result);
+      }
+    });
+  } else if (type === 'object') {
+    joi._inner.children.forEach((joiChild) => {
+      const result = scanForLazy(joiChild.schema || joiChild, lazyFn);
+      if (result.length) {
+        lazies.push(...result);
+      }
+    });
+  }
+  return lazies;
+}
 
+const hash = {};
+
+const TYPES = {
   alternatives: (schema, joi, transformer) => {
+    const result = (schema.oneOf = []);
 
-    var result = schema.oneOf = [];
-
-    joi._inner.matches.forEach(function (match) {
-
+    joi._inner.matches.forEach(function(match) {
       if (match.schema) {
         return result.push(convert(match.schema, transformer));
       }
 
-      if (!match.is) {
-        throw new Error('joi.when requires an "is"');
+      if (!match.is && !match.then) {
+        throw new Error('joi.when requires an "is" or a "then"');
       }
       if (!(match.then || match.otherwise)) {
         throw new Error('joi.when requires one or both of "then" and "otherwise"');
@@ -28,9 +51,12 @@ let TYPES = {
       if (match.otherwise) {
         result.push(convert(match.otherwise, transformer));
       }
-
     });
     return schema;
+  },
+
+  lazy: (schema, joi, transformer) => {
+    return convert(joi._flags.lazy(), transformer);
   },
 
   date: (schema, joi) => {
@@ -45,14 +71,7 @@ let TYPES = {
   },
 
   any: (schema) => {
-    schema.type = [
-      "array",
-      "boolean",
-      'number',
-      "object",
-      'string',
-      "null"
-    ];
+    schema.type = ['array', 'boolean', 'number', 'object', 'string', 'null'];
     return schema;
   },
 
@@ -148,7 +167,9 @@ let TYPES = {
           // since Joi v9: test.arg.pattern
 
           const pattern = arg && arg.pattern ? arg.pattern : arg;
-          schema.pattern = String(pattern).replace(/^\//,'').replace(/\/$/,'');
+          schema.pattern = String(pattern)
+            .replace(/^\//, '')
+            .replace(/\/$/, '');
           break;
         case 'min':
           schema.minLength = test.arg;
@@ -173,7 +194,7 @@ let TYPES = {
     schema.properties = {};
     schema.additionalProperties = Boolean(joi._flags.allowUnknown);
     schema.patterns = joi._inner.patterns.map((pattern) => {
-      return {regex: pattern.regex, rule: convert(pattern.rule, transformer)};
+      return { regex: pattern.regex, rule: convert(pattern.rule, transformer) };
     });
 
     if (!joi._inner.children) {
@@ -181,7 +202,7 @@ let TYPES = {
     }
 
     joi._inner.children.forEach((property) => {
-      if(property.schema._flags.presence !== 'forbidden') {
+      if (property.schema._flags.presence !== 'forbidden') {
         schema.properties[property.key] = convert(property.schema, transformer);
         if (property.schema._flags.presence === 'required') {
           schema.required = schema.required || [];
@@ -202,18 +223,17 @@ let TYPES = {
  * @param {TransformFunction} [transformer=null]
  * @returns {JSONSchema}
  */
-export default function convert(joi,transformer=null) {
-
-  assert('object'===typeof joi && true === joi.isJoi, 'requires a joi schema object');
+function convert(joi, transformer = null) {
+  assert('object' === typeof joi && true === joi.isJoi, 'requires a joi schema object');
 
   assert(joi._type, 'joi schema object must have a type');
 
-  if(!TYPES[joi._type]){
+  if (!TYPES[joi._type]) {
     throw new Error(`sorry, do not know how to convert unknown joi type: "${joi._type}"`);
   }
 
-  if(transformer){
-    assert('function'===typeof transformer, 'transformer must be a function');
+  if (transformer) {
+    assert('function' === typeof transformer, 'transformer must be a function');
   }
 
   // JSON Schema root for this type.
@@ -226,8 +246,8 @@ export default function convert(joi,transformer=null) {
 
   if (joi._examples && joi._examples.length > 0) {
     schema.examples = joi._examples;
-  } 
-  
+  }
+
   if (joi._examples && joi._examples.length === 1) {
     schema.example = joi._examples[0];
   }
@@ -244,31 +264,31 @@ export default function convert(joi,transformer=null) {
     schema['default'] = joi._flags.default;
   }
 
-  if (joi._valids && joi._valids._set && joi._valids._set.length){
-    if(Array.isArray(joi._inner.children)) {
+  if (joi._valids && joi._valids._set && joi._valids._set.size) {
+    if (Array.isArray(joi._inner.children)) {
       return {
         '------oneOf': [
           {
-            'type': joi._type,
-            'enum': joi._valids._set
+            type: joi._type,
+            enum: [...joi._valids._set]
           },
           TYPES[joi._type](schema, joi, transformer)
         ]
       };
     }
-    schema['enum']=joi._valids._set;
+    schema['enum'] = [...joi._valids._set];
   }
 
   let result = TYPES[joi._type](schema, joi, transformer);
 
-  if(transformer){
+  if (transformer) {
     result = transformer(result, joi);
   }
 
   return result;
 }
 
-module.exports = exports = convert;
+module.exports = convert;
 convert.TYPES = TYPES;
 
 /**
